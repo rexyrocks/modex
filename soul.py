@@ -215,6 +215,8 @@ intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="s!", intents=intents)
 active_sessions: set[int] = set()
 _session_lock = asyncio.Lock()
+_onboarding_creating: set[int] = set()   # prevents double channel race condition
+_onboarding_lock = asyncio.Lock()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  HELPERS
@@ -708,16 +710,16 @@ async def on_member_update(before: discord.Member, after: discord.Member):
     after_ids  = {r.id for r in after.roles}
 
     if SOUL_STAFF_ROLE not in before_ids and SOUL_STAFF_ROLE in after_ids:
-        # Prevent double channel: skip if an onboarding channel already exists for this member
-        safe_name = re.sub(r"[^a-z0-9-]", "", after.name.lower().replace(" ", "-"))[:20] or "staff"
-        existing = discord.utils.get(
-            after.guild.text_channels,
-            name=f"onboarding-{safe_name}-{after.id}",
-        )
-        if existing:
-            log.info("Onboarding channel already exists for %s (%d), skipping creation.", after.name, after.id)
-            return
-        channel = await create_onboarding_channel(after.guild, after)
+        async with _onboarding_lock:
+            if after.id in _onboarding_creating:
+                log.info("Onboarding already in progress for %s (%d), skipping.", after.name, after.id)
+                return
+            _onboarding_creating.add(after.id)
+        try:
+            channel = await create_onboarding_channel(after.guild, after)
+        finally:
+            async with _onboarding_lock:
+                _onboarding_creating.discard(after.id)
         if channel:
             await channel.send(
                 content=f"👋 Welcome {after.mention}! Read the brochure below and click **Start Onboarding** when ready.",
@@ -917,7 +919,16 @@ async def onboard_cmd(interaction: discord.Interaction, member: discord.Member):
         await interaction.response.send_message("No permission.", ephemeral=True)
         return
     await interaction.response.defer(ephemeral=True)
-    channel = await create_onboarding_channel(interaction.guild, member)
+    async with _onboarding_lock:
+        if member.id in _onboarding_creating:
+            await interaction.followup.send("⚠️ An onboarding channel is already being created for this member.", ephemeral=True)
+            return
+        _onboarding_creating.add(member.id)
+    try:
+        channel = await create_onboarding_channel(interaction.guild, member)
+    finally:
+        async with _onboarding_lock:
+            _onboarding_creating.discard(member.id)
     if channel:
         await channel.send(
             content=f"👋 Welcome {member.mention}! Read the brochure below and click **Start Onboarding** when ready.",
