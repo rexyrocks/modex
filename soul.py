@@ -96,7 +96,7 @@ QUESTIONS = [
     ("💪 Biggest Strength",         "What do you think your biggest strength would be as a Soul Staff member?"),
     ("⚠️ Handling Rule Breakers",   "How would you handle a member who is repeatedly breaking the rules but claims they didn't know about them?"),
     ("📋 Weekly Minimum",           "Our staff minimum is 30 messages/week. Missing it 2 weeks in a row triggers a demotion review. Are you okay with that, and how will you stay consistent?"),
-    ("🤝 Conflict Resolution",      "If you disagreed with a decision made by a Supreme or Owner, what would you do?"),
+    ("🤝 Conflict Resolution",      "If you disagreed with a decision made by a member of the leadership team, what would you do?"),
     ("📝 Anything Else",            "Is there anything else the leadership team should know about you before you officially start?"),
 ]
 
@@ -230,6 +230,11 @@ def fmt_duration(td: timedelta) -> str:
     m, s = divmod(total, 60)
     return f"{m}m {s}s" if m else f"{s}s"
 
+def progress_bar(current: int, total: int, length: int = 10) -> str:
+    filled = round(length * current / total)
+    bar = "█" * filled + "░" * (length - filled)
+    return f"`{bar}` {current}/{total}"
+
 def has_leadership(member: discord.Member) -> bool:
     return any(r.id in LEADERSHIP_ROLES for r in member.roles)
 
@@ -340,50 +345,62 @@ async def create_onboarding_channel(guild: discord.Guild, member: discord.Member
 #  BROCHURE
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def build_brochure(member: discord.Member) -> discord.Embed:
-    e = discord.Embed(color=0x8B6FFF, timestamp=datetime.now(timezone.utc))
+    e = discord.Embed(
+        description=(
+            f"## ✦ Congratulations, {member.display_name}!\n"
+            f"You've been selected as **Soul Staff** — welcome to the team.\n"
+            f"Read everything below carefully, then hit **Start Onboarding** when you're ready.\n"
+            f"-# Assigned {short_ts()}"
+        ),
+        color=0x8B6FFF,
+        timestamp=datetime.now(timezone.utc),
+    )
     e.set_author(
         name="Soul Server — Staff Onboarding",
         icon_url=member.guild.icon.url if member.guild.icon else None,
     )
     e.set_thumbnail(url=member.display_avatar.url)
-    e.add_field(name="", value=(
-        f"## ✦ Welcome, {member.display_name}!\n"
-        "You've been assigned **Soul Staff**. Read this carefully before you begin.\n"
-        f"> *Assigned {short_ts()}*"
-    ), inline=False)
-    e.add_field(name="🏛️  Role Hierarchy", value=(
-        "```\n"
-        "👑  Owner      →  Final authority\n"
-        "💜  Supreme    →  Senior leadership\n"
-        "⭐  Soul Staff →  You are here\n"
-        "🔧  Mod        →  Chat moderation\n"
-        "💎  Sapphire   →  Trusted members\n"
+
+    e.add_field(name="🏛️ Role Hierarchy", value=(
+        "```ansi\n"
+        "\u001b[33m👑 Owner     \u001b[0m—  Final authority\n"
+        "\u001b[35m💜 Supreme   \u001b[0m—  Senior leadership\n"
+        "\u001b[34m⭐ Soul Staff \u001b[0m—  ← You are here\n"
+        "\u001b[32m🔧 Mod       \u001b[0m—  Chat moderation\n"
+        "\u001b[36m💎 Sapphire  \u001b[0m—  Trusted members\n"
         "```"
     ), inline=False)
-    e.add_field(name="📋  Your Duties", value=(
-        "**🛡️ Moderation** — monitor chat, mute rule breakers, log incidents\n"
-        "**🎉 Events** — host bi-weekly events, manage event channels\n"
-        "**🤝 Welcoming** — greet new members daily\n"
-        "**📢 Announcements** — post event reminders & updates"
+
+    e.add_field(name="📋 Your Duties", value=(
+        "> 🛡️ **Moderation** — monitor chat, mute rule breakers, log incidents\n"
+        "> 🎉 **Events** — host bi-weekly events, manage event channels\n"
+        "> 🤝 **Welcoming** — greet new members daily\n"
+        "> 📢 **Announcements** — post event reminders & updates"
     ), inline=False)
+
     e.add_field(
-        name="💬  Weekly Minimum",
-        value="```\n30 messages / week\nMiss 2 weeks in a row → demotion review\n```",
+        name="💬 Weekly Minimum",
+        value="**30 messages / week**\n-# Miss 2 weeks in a row → demotion review",
         inline=True,
     )
     e.add_field(
-        name="📈  Promotions",
-        value="Consistency → Initiative → Internal vote → Private notice\n*No public campaigning.*",
+        name="📈 Promotions",
+        value="Consistency → Initiative → Internal vote\n-# *No public campaigning.*",
         inline=True,
     )
-    e.add_field(name="📌  Staff Rules", value=(
-        "> Never abuse permissions — log everything\n"
-        "> Keep staff matters in staff channels\n"
-        "> Respect every member regardless of rank\n"
-        "> Going inactive? Notify the team first\n"
-        "> Disagreements go through private channels"
+    e.add_field(name="\u200b", value="\u200b", inline=True)  # spacer
+
+    e.add_field(name="📌 Staff Rules", value=(
+        "```\n"
+        "✖  Never abuse permissions — log everything\n"
+        "✖  Keep staff matters in staff channels\n"
+        "✖  Disrespect towards any member = instant review\n"
+        "✖  Going inactive? Notify the team first\n"
+        "✖  Disagreements go through private channels\n"
+        "```"
     ), inline=False)
-    e.set_footer(text="Press 'Start Onboarding' below when you're ready • Soul Server")
+
+    e.set_footer(text="Soul Server  •  Press 'Start Onboarding' below when you're ready")
     return e
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -483,6 +500,11 @@ async def run_interview(member: discord.Member, guild: discord.Guild, channel: d
                     build_question_prompt(prev_answer, question, member.display_name),
                     max_tokens=200,
                 )
+            progress = discord.Embed(
+                description=f"**Question {q_idx} of {total}** — {label}\n{progress_bar(q_idx, total)}",
+                color=0x8B6FFF,
+            )
+            await channel.send(embed=progress)
             await channel.send(aria_msg)
             convo_log.append(f"**[Aria — Q{q_idx}/{total} — {label}]** {aria_msg}")
 
@@ -539,10 +561,9 @@ async def run_interview(member: discord.Member, guild: discord.Guild, channel: d
                         await channel.send(embed=discord.Embed(
                             title="⚠️ Invalid Response",
                             description=(
-                                f"**Reason:** {reason}\n"
-                                f"Please give a proper answer.\n\n"
-                                f"**{remaining} warning{'s' if remaining > 1 else ''} remaining** "
-                                "before this session gets flagged."
+                                f"**Reason:** {reason}\n\n"
+                                f"{'🟥' * strikes}{'⬛' * (3 - strikes)}  **{strikes}/3 warnings**\n"
+                                f"-# {remaining} more invalid response{'s' if remaining > 1 else ''} will flag this session."
                             ),
                             color=0xFFA500,
                         ))
@@ -597,16 +618,18 @@ async def run_interview(member: discord.Member, guild: discord.Guild, channel: d
         await post_logs(guild, member, convo_log, answers, summary, flagged, duration)
 
         cd_msg = await channel.send(embed=discord.Embed(
-            description="🗑️ This channel will be deleted in **30s**.",
-            color=0x2F3136,
-        ))
+            title="🏁 Onboarding Complete",
+            description="Your answers have been sent to leadership.\nThis channel will be removed shortly.",
+            color=0x8B6FFF,
+        ).set_footer(text="🗑️ Deleting in 30s"))
         for secs in [25, 20, 15, 10, 5]:
             await asyncio.sleep(5)
             try:
                 await cd_msg.edit(embed=discord.Embed(
-                    description=f"🗑️ This channel will be deleted in **{secs}s**.",
-                    color=0x2F3136,
-                ))
+                    title="🏁 Onboarding Complete",
+                    description="Your answers have been sent to leadership.\nThis channel will be removed shortly.",
+                    color=0x8B6FFF,
+                ).set_footer(text=f"🗑️ Deleting in {secs}s"))
             except Exception:
                 pass
         await asyncio.sleep(5)
@@ -685,6 +708,15 @@ async def on_member_update(before: discord.Member, after: discord.Member):
     after_ids  = {r.id for r in after.roles}
 
     if SOUL_STAFF_ROLE not in before_ids and SOUL_STAFF_ROLE in after_ids:
+        # Prevent double channel: skip if an onboarding channel already exists for this member
+        safe_name = re.sub(r"[^a-z0-9-]", "", after.name.lower().replace(" ", "-"))[:20] or "staff"
+        existing = discord.utils.get(
+            after.guild.text_channels,
+            name=f"onboarding-{safe_name}-{after.id}",
+        )
+        if existing:
+            log.info("Onboarding channel already exists for %s (%d), skipping creation.", after.name, after.id)
+            return
         channel = await create_onboarding_channel(after.guild, after)
         if channel:
             await channel.send(
@@ -930,11 +962,19 @@ async def reset_cooldown(interaction: discord.Interaction, member: discord.Membe
 
 @bot.tree.command(name="staffinfo", description="Show Soul Staff requirements")
 async def staffinfo(interaction: discord.Interaction):
-    e = discord.Embed(title="⭐ Soul Staff — Quick Reference", color=0x8B6FFF, timestamp=datetime.now(timezone.utc))
-    e.add_field(name="💬 Min Messages / Week", value="30",                    inline=True)
-    e.add_field(name="🎉 Event Hosting",       value="Bi-weekly",             inline=True)
-    e.add_field(name="⚠️ Demotion Trigger",    value="2 weeks below minimum", inline=True)
-    e.add_field(name="⏳ Onboarding Cooldown", value=f"{COOLDOWN_DAYS} days", inline=True)
+    e = discord.Embed(
+        title="⭐ Soul Staff — Quick Reference",
+        description="Everything you need to know about being Soul Staff.",
+        color=0x8B6FFF,
+        timestamp=datetime.now(timezone.utc),
+    )
+    e.add_field(name="💬 Weekly Minimum",   value="**30** messages / week",         inline=True)
+    e.add_field(name="🎉 Event Hosting",    value="**Bi-weekly**",                   inline=True)
+    e.add_field(name="⚠️ Demotion Trigger", value="2 weeks below minimum",           inline=True)
+    e.add_field(name="⏳ Onboarding Cooldown", value=f"**{COOLDOWN_DAYS}** days",   inline=True)
+    e.add_field(name="📈 Promotion Path",   value="Consistency → Initiative → Vote", inline=True)
+    e.add_field(name="📌 Key Rule",         value="Log everything, abuse nothing",   inline=True)
+    e.set_footer(text="Soul Server Staff Team")
     await interaction.response.send_message(embed=e)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
