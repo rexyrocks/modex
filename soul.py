@@ -169,6 +169,7 @@ def build_summary_prompt(name: str, transcript: str) -> str:
 #  COOLDOWN STORAGE
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 COOLDOWN_FILE = Path("cooldowns.json")
+cooldown_lock = asyncio.Lock()
 
 def load_cooldowns() -> dict:
     if COOLDOWN_FILE.exists():
@@ -188,10 +189,11 @@ def save_cooldowns(data: dict):
         Path(tmp).unlink(missing_ok=True)
         raise
 
-def set_cooldown(user_id: int):
-    data = load_cooldowns()
-    data[str(user_id)] = datetime.now(timezone.utc).isoformat()
-    save_cooldowns(data)
+async def set_cooldown(user_id: int):
+    async with cooldown_lock:
+        data = load_cooldowns()
+        data[str(user_id)] = datetime.now(timezone.utc).isoformat()
+        save_cooldowns(data)
 
 def get_cooldown_remaining(user_id: int) -> timedelta | None:
     data = load_cooldowns()
@@ -290,8 +292,8 @@ async def ai_evaluate(question: str, answer: str) -> tuple[bool, str]:
         data = json.loads(raw)
         return bool(data.get("valid", True)), data.get("reason", "")
     except Exception as e:
-        log.warning("ai_evaluate failed (%s) — defaulting to valid", e)
-        return True, ""  # fail open — don't punish for AI errors
+        log.warning("ai_evaluate failed (%s) — treating as invalid", e)
+        return False, "AI validation error — please try again."
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  CREATE ONBOARDING CHANNEL
@@ -324,7 +326,7 @@ async def create_onboarding_channel(guild: discord.Guild, member: discord.Member
 
     try:
         return await guild.create_text_channel(
-            name=f"onboarding-{safe}",
+            name=f"onboarding-{safe}-{member.id}",
             overwrites=overwrites,
             category=category,
             topic=f"Staff onboarding for {member.display_name} ({member.id})",
@@ -459,6 +461,7 @@ class OnboardingView(discord.ui.View):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def run_interview(member: discord.Member, guild: discord.Guild, channel: discord.TextChannel):
     start_time = datetime.now(timezone.utc)
+    await set_cooldown(member.id)
     convo_log  = []
     flagged    = False
     answers    = {}
@@ -560,7 +563,6 @@ async def run_interview(member: discord.Member, guild: discord.Guild, channel: d
         summary  = ""
 
         if not flagged:
-            set_cooldown(member.id)
             transcript = "\n".join(convo_log)
             async with channel.typing():
                 summary = await ai_chat([
