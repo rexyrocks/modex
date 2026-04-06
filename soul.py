@@ -307,10 +307,11 @@ async def ai_evaluate(question: str, answer: str) -> tuple[bool, str]:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def create_onboarding_channel(guild: discord.Guild, member: discord.Member) -> discord.TextChannel | None:
     # Check by member ID in channel topic — works regardless of channel name format
+    _mid = str(member.id)
     existing = discord.utils.find(
         lambda ch: isinstance(ch, discord.TextChannel)
             and ch.name.startswith("onboarding-")
-            and str(member.id) in (ch.topic or ""),
+            and (_mid in (ch.topic or "") or _mid in ch.name),
         guild.channels,
     )
     if existing:
@@ -725,11 +726,12 @@ async def on_member_update(before: discord.Member, after: discord.Member):
             if after.id in _onboarding_creating:
                 log.info("Onboarding already in progress for %s (%d), skipping.", after.name, after.id)
                 return
-            # Also check if channel already exists (survives restarts)
+            # Check if channel already exists — match by ID in topic OR name
+            _mid = str(after.id)
             already = discord.utils.find(
                 lambda ch: isinstance(ch, discord.TextChannel)
                     and ch.name.startswith("onboarding-")
-                    and str(after.id) in (ch.topic or ""),
+                    and (_mid in (ch.topic or "") or _mid in ch.name),
                 after.guild.channels,
             )
             if already:
