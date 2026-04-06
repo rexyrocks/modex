@@ -725,6 +725,16 @@ async def on_member_update(before: discord.Member, after: discord.Member):
             if after.id in _onboarding_creating:
                 log.info("Onboarding already in progress for %s (%d), skipping.", after.name, after.id)
                 return
+            # Also check if channel already exists (survives restarts)
+            already = discord.utils.find(
+                lambda ch: isinstance(ch, discord.TextChannel)
+                    and ch.name.startswith("onboarding-")
+                    and str(after.id) in (ch.topic or ""),
+                after.guild.channels,
+            )
+            if already:
+                log.info("Onboarding channel already exists for %s (%d): #%s — skipping.", after.name, after.id, already.name)
+                return
             _onboarding_creating.add(after.id)
         try:
             channel = await create_onboarding_channel(after.guild, after)
