@@ -62,7 +62,8 @@ def optional_int_env(key: str):
     return int(val) if val else None
 
 TOKEN           = require_env("BOT_TOKEN")
-SOUL_STAFF_ROLE = require_env("SOUL_STAFF_ROLE", int)
+SOUL_STAFF_ROLE = require_env("SOUL_STAFF_ROLE", int)  # given manually by leadership after review
+APPLICANT_ROLE  = require_env("APPLICANT_ROLE", int)   # triggers onboarding
 TICKET_LOG_CH   = require_env("TICKET_LOG_CH", int)
 CONVO_LOG_CH    = require_env("CONVO_LOG_CH", int)
 MODLOG_CH       = require_env("MODLOG_CH", int)
@@ -77,6 +78,7 @@ if not LEADERSHIP_ROLES:
 ONBOARDING_CATEGORY_ID = optional_int_env("ONBOARDING_CATEGORY_ID")
 
 COOLDOWN_DAYS = 7
+ONBOARDING_START_HOURS = 24  # hours before Start Onboarding button unlocks
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  GROQ CLIENT
@@ -444,6 +446,27 @@ class OnboardingView(discord.ui.View):
             ), ephemeral=True)
             return
 
+        # 24hr onboarding start cooldown
+        start_key = f"onboarding_start_{member.id}"
+        start_data = load_cooldowns()
+        last_start = start_data.get(start_key)
+        if last_start:
+            try:
+                last_dt = datetime.fromisoformat(last_start)
+                elapsed = (datetime.now(timezone.utc) - last_dt).total_seconds()
+                remaining_secs = int(ONBOARDING_START_HOURS * 3600 - elapsed)
+                if remaining_secs > 0:
+                    hrs = remaining_secs // 3600
+                    mins = (remaining_secs % 3600) // 60
+                    await interaction.followup.send(embed=discord.Embed(
+                        title="⏳ Not Yet!",
+                        description=f"You can start your onboarding interview in **{hrs}h {mins}m**.\nTake the time to read the brochure carefully!",
+                        color=0xFFA500,
+                    ), ephemeral=True)
+                    return
+            except ValueError:
+                pass
+
         async with _session_lock:
             if member.id in active_sessions:
                 await interaction.followup.send(embed=discord.Embed(
@@ -452,6 +475,11 @@ class OnboardingView(discord.ui.View):
                 ), ephemeral=True)
                 return
             active_sessions.add(member.id)
+
+        # Save 24hr start cooldown
+        start_data = load_cooldowns()
+        start_data[f"onboarding_start_{member.id}"] = datetime.now(timezone.utc).isoformat()
+        save_cooldowns(start_data)
 
         for child in self.children:
             child.disabled = True
@@ -631,6 +659,15 @@ async def run_interview(member: discord.Member, guild: discord.Guild, channel: d
 
         await post_logs(guild, member, convo_log, answers, summary, flagged, duration)
 
+        # Remove applicant role — leadership will decide on Soul Staff
+        applicant_role = guild.get_role(APPLICANT_ROLE)
+        if applicant_role and applicant_role in member.roles:
+            try:
+                await member.remove_roles(applicant_role, reason="Onboarding interview completed")
+                log.info("Removed Applicant role from %s (%d)", member.name, member.id)
+            except Exception as ex:
+                log.error("Failed to remove Applicant role from %s: %s", member.name, ex)
+
         cd_msg = await channel.send(embed=discord.Embed(
             title="🏁 Onboarding Complete",
             description="Your answers have been sent to leadership.\nThis channel will be removed shortly.",
@@ -721,7 +758,7 @@ async def on_member_update(before: discord.Member, after: discord.Member):
     before_ids = {r.id for r in before.roles}
     after_ids  = {r.id for r in after.roles}
 
-    if SOUL_STAFF_ROLE not in before_ids and SOUL_STAFF_ROLE in after_ids:
+    if APPLICANT_ROLE not in before_ids and APPLICANT_ROLE in after_ids:
         # Dedup via cooldowns.json — block repeat events within 30 seconds
         dedup_key = f"onboarding_dedup_{after.id}"
         async with cooldown_lock:
@@ -757,7 +794,7 @@ async def on_member_update(before: discord.Member, after: discord.Member):
                 embed=build_brochure(after),
                 view=OnboardingView(),
             )
-        e = discord.Embed(title="⭐ Soul Staff Assigned", color=0x8B6FFF, timestamp=datetime.now(timezone.utc))
+        e = discord.Embed(title="📋 Applicant Onboarding Started", color=0x8B6FFF, timestamp=datetime.now(timezone.utc))
         e.set_author(name=str(after), icon_url=after.display_avatar.url)
         e.add_field(name="Member",  value=f"{after.mention} `{after.name}`")
         e.add_field(name="Channel", value=channel.mention if channel else "*(failed)*")
