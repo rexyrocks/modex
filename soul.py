@@ -722,30 +722,35 @@ async def on_member_update(before: discord.Member, after: discord.Member):
     after_ids  = {r.id for r in after.roles}
 
     if SOUL_STAFF_ROLE not in before_ids and SOUL_STAFF_ROLE in after_ids:
-        # Atomic dedup: write member ID to a temp file before doing anything.
-        # If file already exists → another event already claimed this onboarding.
-        flag_path = Path(f"onboarding_{after.id}.lock")
-        try:
-            flag_path.touch(exist_ok=False)   # raises FileExistsError if already claimed
-        except FileExistsError:
-            log.info("Onboarding lock already exists for %s (%d) — skipping duplicate event.", after.name, after.id)
+        # Dedup via cooldowns.json — block repeat events within 30 seconds
+        dedup_key = f"onboarding_dedup_{after.id}"
+        async with cooldown_lock:
+            data = load_cooldowns()
+            last = data.get(dedup_key)
+            if last:
+                try:
+                    last_dt = datetime.fromisoformat(last)
+                    if (datetime.now(timezone.utc) - last_dt).total_seconds() < 30:
+                        log.info("Dedup blocked duplicate onboarding event for %s (%d)", after.name, after.id)
+                        return
+                except ValueError:
+                    pass
+            data[dedup_key] = datetime.now(timezone.utc).isoformat()
+            save_cooldowns(data)
+
+        # Check if channel already exists
+        _mid = str(after.id)
+        already = discord.utils.find(
+            lambda ch: isinstance(ch, discord.TextChannel)
+                and ch.name.startswith("onboarding-")
+                and (_mid in (ch.topic or "") or _mid in ch.name),
+            after.guild.channels,
+        )
+        if already:
+            log.info("Onboarding channel already exists for %s (%d): #%s — skipping.", after.name, after.id, already.name)
             return
 
-        try:
-            # Double-check: channel may already exist (e.g. from /onboard command)
-            _mid = str(after.id)
-            already = discord.utils.find(
-                lambda ch: isinstance(ch, discord.TextChannel)
-                    and ch.name.startswith("onboarding-")
-                    and (_mid in (ch.topic or "") or _mid in ch.name),
-                after.guild.channels,
-            )
-            if already:
-                log.info("Onboarding channel already exists for %s (%d): #%s — skipping.", after.name, after.id, already.name)
-                return
-            channel = await create_onboarding_channel(after.guild, after)
-        finally:
-            flag_path.unlink(missing_ok=True)
+        channel = await create_onboarding_channel(after.guild, after)
         if channel:
             await channel.send(
                 content=f"👋 Welcome {after.mention}! Read the brochure below and click **Start Onboarding** when ready.",
