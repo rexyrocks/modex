@@ -306,6 +306,17 @@ async def ai_evaluate(question: str, answer: str) -> tuple[bool, str]:
 #  CREATE ONBOARDING CHANNEL
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def create_onboarding_channel(guild: discord.Guild, member: discord.Member) -> discord.TextChannel | None:
+    # Check by member ID in channel topic — works regardless of channel name format
+    existing = discord.utils.find(
+        lambda ch: isinstance(ch, discord.TextChannel)
+            and ch.name.startswith("onboarding-")
+            and str(member.id) in (ch.topic or ""),
+        guild.channels,
+    )
+    if existing:
+        log.info("Onboarding channel already exists for %s (%d): #%s", member.name, member.id, existing.name)
+        return None
+
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
         member: discord.PermissionOverwrite(
