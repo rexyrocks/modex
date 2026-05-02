@@ -77,6 +77,9 @@ if not LEADERSHIP_ROLES:
 # Onboarding channels go inside this category
 ONBOARDING_CATEGORY_ID = optional_int_env("ONBOARDING_CATEGORY_ID")
 
+# Counting game channel (set to 0 / leave blank to disable)
+COUNTING_CHANNEL_ID = optional_int_env("COUNTING_CHANNEL_ID")
+
 COOLDOWN_DAYS = 7
 ONBOARDING_START_HOURS = 24  # hours before Start Onboarding button unlocks
 
@@ -219,6 +222,11 @@ active_sessions: set[int] = set()
 _session_lock = asyncio.Lock()
 _onboarding_creating: set[int] = set()   # prevents double channel race condition
 _onboarding_lock = asyncio.Lock()
+
+# ── Counting game state (in-memory) ──────────────────────────────────────────
+_count_current:  int            = 0     # last correct number (0 = not started)
+_count_high:     int            = 0     # all-time high score
+_count_last_uid: int | None     = None  # user ID of last correct count
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  HELPERS
@@ -977,6 +985,75 @@ async def on_guild_update(before: discord.Guild, after: discord.Guild):
         e.add_field(name="After",  value=after.name)
         await send_modlog(after, e)
 
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  COUNTING GAME
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+@bot.event
+async def on_message(message: discord.Message):
+    global _count_current, _count_high, _count_last_uid
+
+    if message.author.bot or not message.guild:
+        await bot.process_commands(message)
+        return
+
+    # Only run counting logic in the configured channel
+    if COUNTING_CHANNEL_ID and message.channel.id == COUNTING_CHANNEL_ID:
+        content = message.content.strip()
+
+        # Silently ignore non-numeric messages
+        if content.lstrip("-").isdigit():
+            number   = int(content)
+            expected = _count_current + 1
+
+            # Rule: same user can't count two in a row
+            if _count_last_uid == message.author.id and _count_current > 0:
+                old_high = _count_high
+                _count_current = 0
+                _count_last_uid = None
+                await message.add_reaction("\U0001f6ab")
+                await message.channel.send(embed=discord.Embed(
+                    title="\U0001f6ab No double counting!",
+                    description=(
+                        f"**{message.author.display_name}**, you can't send two numbers in a row!\n\n"
+                        "Counting broken! Start again from **1**."
+                    ),
+                    color=0xFFA500,
+                ).set_footer(text=f"\U0001f3c6 High score: {old_high}"))
+
+            elif number != expected:
+                old_high = _count_high
+                _count_current = 0
+                _count_last_uid = None
+                await message.add_reaction("\u274c")
+                await message.channel.send(embed=discord.Embed(
+                    title="\u274c Wrong number!",
+                    description=(
+                        f"**{message.author.display_name}** sent `{number}` "
+                        f"but the next number was `{expected}`.\n\n"
+                        "Counting broken! Start again from **1**."
+                    ),
+                    color=0xED4245,
+                ).set_footer(text=f"\U0001f3c6 High score: {old_high}"))
+
+            else:
+                # Correct!
+                _count_current  = number
+                _count_last_uid = message.author.id
+                if number > _count_high:
+                    _count_high = number
+                await message.add_reaction("\u2705")
+                if number % 100 == 0:
+                    await message.channel.send(embed=discord.Embed(
+                        title=f"\U0001f389 {number}! Milestone!",
+                        description=f"You counted to **{number}**! Keep going!",
+                        color=0x8B6FFF,
+                    ))
+
+        return  # Don't process prefix commands inside the counting channel
+
+    await bot.process_commands(message)
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  SLASH COMMANDS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1055,6 +1132,27 @@ async def staffinfo(interaction: discord.Interaction):
     e.add_field(name="📌 Key Rule",         value="Log everything, abuse nothing",   inline=True)
     e.set_footer(text="Soul Server Staff Team")
     await interaction.response.send_message(embed=e)
+
+
+@bot.tree.command(name="count", description="Show the current count and high score")
+async def count_cmd(interaction: discord.Interaction):
+    embed = discord.Embed(title="\U0001f4ca Counting Stats", color=0x8B6FFF)
+    embed.add_field(name="Current Count", value=f"`{_count_current}`", inline=True)
+    embed.add_field(name="High Score",    value=f"`{_count_high}`",    inline=True)
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="resetcount", description="Manually reset the counting game")
+async def resetcount_cmd(interaction: discord.Interaction):
+    global _count_current, _count_last_uid
+    if not has_leadership(interaction.user):
+        await interaction.response.send_message("No permission.", ephemeral=True)
+        return
+    _count_current  = 0
+    _count_last_uid = None
+    await interaction.response.send_message(embed=discord.Embed(
+        description="\U0001f504 Count reset to **0** by a moderator. Next number is **1**.",
+        color=0x57F287,
+    ))
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  READY
